@@ -1,4 +1,4 @@
-{/*
+/*
     Below you will find an EscrowSystem contract that allows user to initialize an escrow, request funds, release funds, and cancel escrow.
     The EscrowSystem struct is the main storage of the contract.
     It contains:
@@ -13,7 +13,7 @@
     Helpful Blueprint sdk commands:
     - npx blueprint build - To build the contract
     - npx blueprint test tests/EscrowSystem.spec.ts - To test the contract
-*/}
+*/
 
 tolk 1.1
 
@@ -25,11 +25,11 @@ struct EscrowSystem {
     isRequested: bool;
 }
 
-fun EscrowSystem.load() {
+fun EscrowSystem.load():EscrowSystem {
     return EscrowSystem.fromCell(contract.getData());
 }
 fun EscrowSystem.store(self) {
-    contract.setData(self);
+    contract.setData(self.toCell());
 }
 
 struct (0xE3D2C1B4) InitializeEscrow {
@@ -47,7 +47,7 @@ struct (0xB1C2D3E4) CancelEscrow {
     queryId: uint32
 }
 
-type MessageBody = RequestFunds & ReleaseFunds & CancelEscrow & InitializeEscrow
+type MessageBody = RequestFunds | ReleaseFunds | CancelEscrow | InitializeEscrow
 
 fun onInternalMessage(in: InMessage) {
     val msg = lazy MessageBody.fromSlice(in.body);
@@ -55,22 +55,25 @@ fun onInternalMessage(in: InMessage) {
     match (msg) {
         InitializeEscrow => {
             var escrow = lazy EscrowSystem.load();
-            escrow.recipient = recipient;
-            escrow.amount = amount;
+            escrow.owner =in.senderAddress;
+            escrow.recipient =msg.recipient;
+            escrow.amount =msg.amount;
             escrow.isReleased = false;
             escrow.isRequested = false;
+            escrow.store();
         }
         RequestFunds => {
             var escrow = lazy EscrowSystem.load();
-            assert (in.senderAddress == escrow.recipient) throw 101;
-            assert (!escrow.isRequested) throw 102;
+            assert (in.senderAddress==escrow.recipient,101);
+            assert (!escrow.isRequested,102);
             escrow.isRequested = true;
             escrow.store();
         }
         ReleaseFunds => {
-            val escrow = lazy EscrowSystem.load();
-            assert (!escrow.isRequested) throw 108;
-            assert (!escrow.isReleased) throw 109;
+            var escrow = lazy EscrowSystem.load();
+            assert(in.senderAddress==escrow.owner,106);
+            assert(escrow.isRequested,108);
+            assert(!escrow.isReleased,109);
             escrow.isReleased = true;
             escrow.store();
             val res = createMessage({
@@ -81,19 +84,20 @@ fun onInternalMessage(in: InMessage) {
             res.send(SEND_MODE_CARRY_ALL_BALANCE);
         }
         CancelEscrow=>{
-            val escrow = lazy EscrowSystem.load();
-            assert (!escrow.isReleased) throw 107;
+            var escrow = lazy EscrowSystem.load();
+            assert(in.senderAddress ==escrow.owner,105);
+            assert(!escrow.isReleased,107);
             escrow.isReleased = true;
             escrow.store();
             val res = createMessage({
                 bounce: false,
-                dest: in.senderAddress, 
+                dest: escrow.owner, 
                 value: contract.getOriginalBalance() - 100000000 
             });
             res.send(SEND_MODE_CARRY_ALL_BALANCE);
         }
         else => {
-            assert (in.body.isEmpty()) throw 100;
+            assert(in.body.isEmpty(),100);
         }
     }
 }
